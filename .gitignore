@@ -9,14 +9,13 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# Local research corpus, indices, databases, and generated logs
-data/raw_pdfs/
-data/processed/
-data/vector_store/
-data/research_logs/
-data/comparator_uploads/
-data/comparator_processed/
-data/comparator_vector_store/
+# Local research corpus, indices, databases, and generated logs.
+# The two exceptions below keep a visible, documented PDF drop folder on GitHub.
+data/*
+!data/README.md
+!data/raw_pdfs/
+data/raw_pdfs/*
+!data/raw_pdfs/COLOQUE_OS_PDFS_AQUI.md
 logs/
 *.sqlite
 *.sqlite-*
