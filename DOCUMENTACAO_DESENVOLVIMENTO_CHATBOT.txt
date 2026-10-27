@@ -1,0 +1,864 @@
+DOCUMENTACAO DETALHADA DO PROJETO rag_chatbot_project_v2
+
+1. VISÃO GERAL DO PROJETO
+
+Este projeto implementa um chatbot academico de dominio fechado baseado em RAG
+(Retrieval-Augmented Generation). O objetivo principal e responder perguntas
+usando apenas os PDFs locais como base de conhecimento, sem depender da
+internet como fonte factual da resposta.
+
+Em termos práticos, o sistema faz o seguinte:
+
+1. Le os PDFs colocados na pasta data/raw_pdfs.
+2. Extrai o texto pagina por pagina.
+3. Limpa e normaliza esse texto.
+4. Divide o texto em blocos menores chamados chunks.
+5. Converte cada chunk em embedding vetorial.
+6. Armazena esses embeddings em um indice FAISS.
+7. Quando o usuario faz uma pergunta, gera o embedding da pergunta.
+8. Busca os chunks mais parecidos semanticamente.
+9. Reordena os resultados com um reranking simples.
+10. Monta um prompt fechado com o contexto recuperado.
+11. Envia esse prompt para a API da DeepSeek.
+12. Exibe a resposta e registra logs e metricas.
+
+O projeto foi estruturado assim porque um chatbot academico ou cientifico precisa
+de rastreabilidade, justificativa e menor risco de alucinacao. Em vez de pedir
+para o modelo "lembrar" fatos sozinho, o sistema primeiro recupera evidencias e
+depois pede ao modelo para responder com base nelas.
+
+
+2. POR QUE FOI ESCOLHIDA A ARQUITETURA RAG
+
+RAG foi usado porque o problema nao e apenas "gerar texto", e sim gerar texto
+confiavel a partir de documentos especificos. Esse tipo de projeto pede:
+
+- controle da base de conhecimento
+- possibilidade de atualizar o conhecimento sem treinar um modelo novo
+- citacao de evidencias
+- reducao de respostas inventadas
+- facilidade de auditoria
+
+Sem RAG, o chatbot dependeria apenas dos pesos internos do modelo e poderia
+inventar respostas ou misturar conhecimento externo com o conteudo do projeto.
+
+Com RAG, a base factual sai dos PDFs indexados localmente. Isso torna o sistema
+mais adequado para iniciacao cientifica, revisao de artigos, apoio academico e
+prototipos de assistentes de dominio fechado.
+
+
+3. OBJETIVO FUNCIONAL DO CHATBOT
+
+O chatbot foi pensado para:
+
+- responder perguntas sobre os PDFs indexados
+- citar trechos e fontes recuperadas
+- funcionar em ambiente local
+- permitir testes com diferentes perfis de escrita
+- registrar historico, metricas e relatorios
+
+O projeto nao foi desenhado para ser um chatbot geral. Ele foi desenhado para
+ser um chatbot de consulta sobre uma base documental local.
+
+
+4. ESTRUTURA GERAL DAS PASTAS
+
+Raiz do projeto:
+
+- app.py
+  Interface web com Streamlit.
+
+- main.py
+  Interface em terminal.
+
+- index_pdfs.py
+  Pipeline de ingestao e indexacao dos PDFs.
+
+- run_reports.py
+  Geracao de relatorios a partir dos logs.
+
+- debug_rag.py
+  Script criado para depuracao do pipeline RAG.
+
+- requirements.txt
+  Lista de dependencias Python.
+
+- .env e .env.example
+  Configuracoes do projeto.
+
+- src/
+  Modulos centrais da aplicacao.
+
+- data/raw_pdfs/
+  PDFs originais.
+
+- data/processed/
+  Saidas intermediarias da extracao e chunking.
+
+- data/vector_store/
+  Indice FAISS e metadados persistidos.
+
+- logs/
+  Historico de conversas, avaliacoes e relatorios.
+
+
+5. BIBLIOTECAS USADAS E POR QUE FORAM USADAS
+
+5.1 python-dotenv
+
+Biblioteca: python-dotenv
+Arquivo relacionado: src/config.py
+
+Por que foi usada:
+- Para carregar variaveis do arquivo .env.
+- Isso permite alterar chave da API, modelo, thresholds e caminhos sem
+  editar o codigo fonte.
+- E uma forma padrao e simples de configuracao em projetos Python.
+
+
+5.2 PyMuPDF
+
+Biblioteca: PyMuPDF
+Import dentro do codigo: fitz
+Arquivo relacionado: src/pdf_loader.py
+
+Por que foi usada:
+- Para extrair texto de PDFs pagina por pagina.
+- PyMuPDF costuma ser rapido e eficiente em PDFs cientificos.
+- Permite usar page.get_text('text'), que retorna o conteudo textual em texto
+  corrido, suficiente para um pipeline RAG inicial.
+
+Decisao de formato:
+- O metodo usado foi get_text('text').
+- Isso significa que o PDF foi convertido para texto simples por pagina.
+- Nao foi usado HTML, XML ou markdown.
+
+Por que texto simples:
+- E mais simples para limpeza e chunking.
+- E suficiente para embeddings semanticos.
+- Reduz complexidade na fase inicial do projeto.
+- Evita depender de estrutura visual do PDF quando a prioridade e recuperar
+  conteudo semantico.
+
+
+5.3 pypdf
+
+Biblioteca: pypdf
+Arquivo relacionado: src/pdf_loader.py
+
+Por que foi usada:
+- Como fallback caso PyMuPDF falhe na leitura do PDF.
+- Isso aumenta robustez do pipeline.
+- Em projetos com PDFs heterogeneos, um unico parser pode falhar em alguns
+  arquivos; o fallback reduz essa fragilidade.
+
+
+5.4 re
+
+Biblioteca padrao do Python: re
+Arquivo relacionado: src/text_cleaner.py e src/utils.py
+
+Por que foi usada:
+- Para limpeza de texto.
+- Para normalizacao de espacos.
+- Para juntar palavras quebradas por hifen no final da linha.
+- Para sanitizar nomes de arquivos.
+
+
+5.5 sentence-transformers
+
+Biblioteca: sentence-transformers
+Arquivo relacionado: src/embeddings.py
+
+Por que foi usada:
+- Para transformar texto em embeddings densos.
+- E uma das bibliotecas mais usadas para busca semantica.
+- Facilita o uso de modelos prontos para comparacao de similaridade textual.
+
+Modelo configurado:
+- O projeto passou a usar como default:
+  sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+Por que esse modelo:
+- O projeto recebe perguntas em portugues.
+- Parte relevante do corpus esta em ingles.
+- Um modelo multilingual lida melhor com consulta em portugues contra corpus
+  em ingles do que um modelo mais limitado linguisticamente.
+
+Observacao:
+- O .env pode sobrescrever esse valor.
+- Na primeira execucao o modelo pode ser baixado da Hugging Face.
+
+
+5.6 numpy
+
+Biblioteca: numpy
+Arquivos relacionados: src/embeddings.py, src/vector_store.py, src/retriever.py
+
+Por que foi usada:
+- Para representar os vetores numericos.
+- Para garantir formato float32 compativel com o FAISS.
+- Para calcular norma do embedding no debug.
+
+
+5.7 faiss-cpu
+
+Biblioteca: faiss-cpu
+Arquivo relacionado: src/vector_store.py
+
+Por que foi usada:
+- Para indexacao vetorial local.
+- Permite busca rapida por similaridade entre embeddings.
+- E uma das ferramentas mais conhecidas para retrieval semantico.
+
+Estrutura escolhida:
+- faiss.IndexFlatIP
+
+Por que IndexFlatIP:
+- O projeto normaliza embeddings.
+- Com vetores normalizados, produto interno aproxima similaridade de cosseno.
+- E uma implementacao simples, precisa e adequada para bases menores.
+- Como o projeto e academico e local, simplicidade e auditabilidade foram
+  priorizadas antes de otimizar para escala massiva.
+
+
+5.8 requests
+
+Biblioteca: requests
+Arquivo relacionado: src/llm_client.py
+
+Por que foi usada:
+- Para chamar a API da DeepSeek via HTTP.
+- E uma biblioteca simples e padrao para integracao com APIs REST.
+
+
+5.9 streamlit
+
+Biblioteca: streamlit
+Arquivo relacionado: app.py
+
+Por que foi usada:
+- Para criar rapidamente uma interface web local.
+- Facilita demonstracao do projeto sem precisar criar frontend do zero.
+- Permite inspecionar resposta, BERTScore, chunks e historico em uma interface
+  amigavel.
+
+
+5.10 bert-score
+
+Biblioteca: bert-score
+Arquivo relacionado: src/evaluation.py
+
+Por que foi usada:
+- Para medir proximidade semantica entre a resposta gerada e os chunks usados
+  como referencia.
+- Nao substitui avaliacao humana, mas ajuda a acompanhar aderencia semantica.
+
+
+5.11 pandas
+
+Biblioteca: pandas
+Presente em requirements, mas pouco explorada no codigo atual.
+
+Por que pode ter sido incluida:
+- Apoio a analise de dados, relatorios ou expansoes futuras.
+- Nao e central na versao atual do pipeline.
+
+
+5.12 tqdm
+
+Biblioteca: tqdm
+Presente em requirements, mas nao aparece como dependencia central no codigo
+aberto atualmente.
+
+Por que pode ter sido incluida:
+- Barra de progresso para futuras versoes da indexacao ou processamento.
+
+
+5.13 csv, json, pathlib, datetime, typing
+
+Bibliotecas padrao do Python
+
+Por que foram usadas:
+- csv: exportacao de relatorios tabulares
+- json: persistencia de metadados, logs e resultados
+- pathlib: manipulacao segura de caminhos
+- datetime: timestamps de logs e relatorios
+- typing: legibilidade, manutencao e clareza do contrato entre funcoes
+
+
+6. COMO O PDF FOI "DECODIFICADO" E POR QUE
+
+Tecnicamente, o projeto nao "decodifica" PDF no sentido de converter binario
+manual. O que ele faz e extrair o texto do container PDF usando bibliotecas
+especializadas.
+
+Fluxo real:
+
+1. O PDF e lido por PyMuPDF.
+2. Se PyMuPDF falhar, o codigo tenta pypdf.
+3. Cada pagina e transformada em um dicionario com:
+   - page_number
+   - text
+4. Depois o texto bruto vira cleaned_text.
+
+Por que pagina por pagina:
+- Mantem rastreabilidade.
+- Permite dizer de qual pagina veio a evidencia.
+- Ajuda no chunking e nas citacoes.
+
+Por que nao usar imagem/OCR como padrao:
+- O projeto parece focado em PDFs que ja contem texto selecionavel.
+- OCR adicionaria dependencias, latencia e maior possibilidade de ruido.
+- Para um primeiro prototipo, extracao textual direta e mais simples e eficaz.
+
+Por que o formato intermediario foi JSON:
+- Facilita inspecao humana.
+- E simples de salvar e reabrir.
+- Mantem estrutura por pagina e por chunk.
+- Permite persistir metadados junto com o texto.
+
+
+7. FORMATOS DE DADOS USADOS NO PROJETO
+
+7.1 PDF original
+
+Pasta:
+- data/raw_pdfs/
+
+Uso:
+- Fonte original da base de conhecimento.
+
+
+7.2 cleaned_text.json
+
+Pasta:
+- data/processed/<nome_pdf>/cleaned_text.json
+
+Conteudo:
+- nome do PDF
+- loader usado
+- lista de paginas
+- cleaned_text de cada pagina
+
+Por que foi usado:
+- Para manter uma versao limpa e inspecionavel do texto extraido.
+- Evita depender do PDF original para verificar a extracao.
+
+
+7.3 chunks.json
+
+Pasta:
+- data/processed/<nome_pdf>/chunks.json
+
+Conteudo:
+- lista de chunks
+- chunk_id
+- text
+- pdf_name
+- page_start, page_end
+- positions em palavras
+
+Por que foi usado:
+- O retrieval trabalha melhor com pedaços menores do que com o documento
+  inteiro.
+- Permite recuperar contexto mais preciso e citavel.
+
+
+7.4 metadata.json
+
+Pasta:
+- data/processed/<nome_pdf>/metadata.json
+
+Conteudo:
+- nome do PDF
+- page_count
+- loader
+- quantidade de chunks
+- erros de processamento
+
+Por que foi usado:
+- Serve como registro resumido da ingestao do documento.
+
+
+7.5 faiss.index
+
+Pasta:
+- data/vector_store/faiss.index
+
+Conteudo:
+- indice vetorial binario do FAISS.
+
+Por que foi usado:
+- E o componente principal da busca semantica.
+
+
+7.6 index_metadata.json
+
+Pasta:
+- data/vector_store/index_metadata.json
+
+Conteudo:
+- metadados alinhados por posicao aos vetores do FAISS.
+
+Por que foi usado:
+- O FAISS armazena vetores, nao texto descritivo rico.
+- Os metadados em JSON permitem mapear o vetor recuperado de volta para o chunk.
+
+
+7.7 index_manifest.json
+
+Pasta:
+- data/vector_store/index_manifest.json
+
+Conteudo:
+- embedding_model
+- dimension
+- vector_count
+
+Por que foi adicionado:
+- Para validar compatibilidade entre o modelo usado na indexacao e o usado na
+  consulta.
+- Isso evita erro silencioso em que o indice existe, mas foi gerado com outro
+  modelo.
+
+
+7.8 logs JSON
+
+Pastas:
+- logs/conversations/
+- logs/evaluations/
+
+Por que foram usados:
+- Para rastrear uso do sistema.
+- Para permitir analise posterior.
+- Para apoiar geracao de relatorios.
+
+
+8. CONFIGURACAO CENTRAL DO PROJETO
+
+Arquivo:
+- src/config.py
+
+Responsabilidades:
+- carregar .env
+- centralizar caminhos
+- centralizar modelos
+- centralizar thresholds
+- centralizar parametros do chunking
+
+Por que isso e importante:
+- Evita valores espalhados no codigo.
+- Facilita ajuste fino sem modificar muitos arquivos.
+- Melhora manutencao e reproducibilidade.
+
+Parametros relevantes:
+- DEEPSEEK_API_KEY
+- DEEPSEEK_MODEL
+- EMBEDDING_MODEL
+- CHUNK_SIZE
+- CHUNK_OVERLAP
+- TOP_K
+- SCORE_THRESHOLD
+- SCORE_FALLBACK_THRESHOLD
+- DEEPSEEK_TIMEOUT
+- RAG_DEBUG
+
+
+9. ETAPA DE INGESTAO E INDEXACAO
+
+Arquivo principal:
+- index_pdfs.py
+
+Fluxo:
+- garante diretorios
+- carrega modelo de embeddings
+- cria VectorStore
+- percorre PDFs
+- usa load_pdf
+- usa build_chunks
+- salva JSONs processados
+- gera embeddings
+- adiciona vetores ao FAISS
+- salva indice e manifesto
+
+Por que essa etapa foi separada da etapa de chat:
+- Indexacao e mais pesada e nao precisa ocorrer toda vez.
+- Separar ingestao e consulta e uma boa pratica em sistemas RAG.
+- Permite atualizar a base somente quando novos PDFs forem adicionados.
+
+
+10. LIMPEZA DE TEXTO
+
+Arquivo:
+- src/text_cleaner.py
+
+O que faz:
+- junta palavras quebradas por hifen e quebra de linha
+- normaliza quebras de linha
+- remove caracteres de controle
+- reduz espacos repetidos
+- remove excesso de linhas vazias
+
+Por que isso foi necessario:
+- O texto extraido de PDF geralmente vem "sujo".
+- Sem limpeza, o chunking e os embeddings ficam piores.
+- Juntar palavras quebradas evita que o modelo veja termos fragmentados.
+
+
+11. CHUNKING
+
+Arquivo:
+- src/chunker.py
+
+Estrategia usada:
+- divide por paragrafos
+- monta chunks por volume de palavras
+- usa overlap entre chunks
+- preserva metadados como pagina e posicoes aproximadas
+
+Por que chunking foi necessario:
+- Modelos de embedding e RAG trabalham melhor com blocos menores do que com
+  documentos inteiros.
+- Chunks menores melhoram a precisao do retrieval.
+
+Por que usar overlap:
+- Para reduzir perda de contexto entre um chunk e o seguinte.
+- Se uma ideia atravessa a fronteira entre blocos, o overlap ajuda a manter a
+  coerencia.
+
+Por que usar chunk_size por palavras:
+- E uma heuristica simples e previsivel.
+- Facilita controlar o tamanho sem depender de tokenizador externo.
+
+
+12. GESTAO DE EMBEDDINGS
+
+Arquivo:
+- src/embeddings.py
+
+Como funciona:
+- carrega o modelo SentenceTransformer
+- codifica lista de textos
+- converte o resultado para numpy float32
+- opcionalmente normaliza embeddings
+
+Por que normalizar:
+- Para usar produto interno no FAISS como aproximacao de similaridade de cosseno.
+
+Por que float32:
+- O FAISS trabalha bem com esse formato.
+- Reduz uso de memoria comparado a float64.
+
+
+13. INDEXACAO VETORIAL
+
+Arquivo:
+- src/vector_store.py
+
+Responsabilidades:
+- criar indice FAISS
+- adicionar vetores e metadata
+- salvar e carregar indice
+- validar consistencia
+- expor estatisticas
+
+Por que separar isso em uma classe:
+- Encapsula a logica vetorial.
+- Facilita manutencao.
+- Permite evoluir para outros tipos de indice no futuro.
+
+Validacoes adicionadas:
+- numero de vetores precisa bater com metadata
+- dimensao do indice precisa bater com a dimensao esperada
+
+Isso foi importante porque falhas nessas relacoes quebram completamente o RAG.
+
+
+14. RECUPERACAO SEMANTICA
+
+Arquivo:
+- src/retriever.py
+
+Fluxo:
+- recebe pergunta
+- gera embedding da pergunta
+- consulta o FAISS
+- aplica filtro por threshold
+- opcionalmente aplica fallback threshold
+- pode imprimir debug detalhado
+
+Por que score_threshold foi usado:
+- Para evitar contexto muito fraco ou irrelevante.
+
+Por que fallback threshold foi adicionado:
+- Porque um corte muito alto pode zerar todos os resultados, mesmo quando ha
+  matches razoaveis.
+- Em corpus pequeno ou multilingue, thresholds muito agressivos prejudicam a
+  recuperacao.
+
+Por que o modo inspect/debug foi criado:
+- Para permitir ver:
+  - shape do embedding da query
+  - norma do embedding
+  - scores crus retornados
+  - quantidade de hits
+  - quais chunks foram selecionados
+
+Isso e fundamental para depurar sistemas RAG.
+
+
+15. RERANKING
+
+Arquivo:
+- src/reranker.py
+
+Como funciona:
+- calcula overlap lexical entre pergunta e texto
+- combina 80 por cento do score vetorial com 20 por cento do overlap lexical
+- ordena resultados pelo weighted_score
+
+Por que foi usado:
+- O score vetorial sozinho nem sempre privilegia o chunk mais util para a
+  pergunta literal.
+- O overlap lexical ajuda a beneficiar chunks com termos em comum.
+
+Por que foi escolhido um reranker simples:
+- Menor complexidade
+- Sem dependencia de cross-encoder
+- Mais facil de explicar em contexto academico
+
+
+16. PROMPT ENGINEERING
+
+Arquivos:
+- src/prompt_profiles.py
+- src/prompt_builder.py
+
+Como funciona:
+- Existem perfis de estilo de resposta.
+- O prompt builder monta um prompt unico com:
+  - identidade do chatbot
+  - regras obrigatorias
+  - formato da resposta
+  - pergunta do usuario
+  - contexto recuperado
+
+Por que foi feito assim:
+- Separa estilo de conteudo.
+- Facilita experimentar perfis sem mudar a logica do chatbot.
+- Reforca que a resposta deve se basear apenas no contexto recuperado.
+
+Perfis existentes:
+- tecnico_cientifico
+- academico_formal
+- profissional_objetivo
+- didatico_intermediario
+- simples_acessivel
+
+
+17. GERACAO COM DEEPSEEK
+
+Arquivo:
+- src/llm_client.py
+
+Como funciona:
+- monta payload JSON
+- envia para endpoint /v1/chat/completions
+- usa system message restritiva
+- retorna o texto da resposta
+
+Por que DeepSeek foi usada:
+- Serve como camada geradora do sistema.
+- A responsabilidade dela aqui nao e "saber o conteudo" sozinha, mas redigir a
+  resposta a partir do contexto recuperado.
+
+Por que requests e payload direto:
+- Simplicidade
+- Transparencia
+- Menor acoplamento a SDKs especificos
+
+
+18. ORQUESTRACAO DO CHATBOT
+
+Arquivo:
+- src/chatbot.py
+
+Esse e o nucleo do projeto.
+
+Responsabilidades:
+- garantir diretorios
+- carregar embedding model
+- carregar FAISS
+- validar indice
+- conferir compatibilidade do modelo do indice
+- executar retrieval
+- executar reranking
+- montar prompt
+- chamar LLM
+- calcular BERTScore
+- salvar historico e avaliacao
+
+Por que esse arquivo e importante:
+- Ele conecta todas as etapas em um fluxo coerente.
+- E o ponto central do comportamento do sistema.
+
+
+19. INTERFACES DE USO
+
+19.1 Interface de terminal
+
+Arquivo:
+- main.py
+
+Por que foi usada:
+- Facil para testar rapidamente durante o desenvolvimento.
+- Boa para depuracao e para ambientes sem interface grafica.
+
+
+19.2 Interface web
+
+Arquivo:
+- app.py
+
+Por que foi usada:
+- Facilita demonstracao do projeto para orientadores, colegas e usuarios.
+- Mostra resposta, BERTScore, chunks e historico da sessao.
+
+
+20. AVALIACAO E LOGS
+
+Arquivos:
+- src/evaluation.py
+- src/history_manager.py
+- src/report_generator.py
+- run_reports.py
+
+Por que isso foi incluido:
+- Um projeto academico nao deve apenas responder; tambem deve registrar
+  comportamento e permitir analise posterior.
+
+Historico:
+- salva pergunta, resposta, fontes e scores
+
+Avaliacao:
+- salva BERTScore e metadados da interacao
+
+Relatorios:
+- sintetizam total de interacoes, media de BERTScore e quantidade de casos sem
+  evidencia suficiente
+
+
+21. UTILITARIOS DE SUPORTE
+
+Arquivo:
+- src/utils.py
+
+Responsabilidades:
+- timestamps
+- leitura e escrita JSON
+- append em listas JSON
+- sanitizacao de nome de arquivo
+
+Por que existem:
+- Para evitar repeticao de codigo e centralizar funcoes auxiliares.
+
+
+22. DEBUGGING E MELHORIAS RECENTES DO RAG
+
+Durante a investigacao do problema de retrieval, algumas melhorias estruturais
+foram adicionadas:
+
+- debug_rag.py para inspecao direta do pipeline
+- index_manifest.json para registrar modelo usado na indexacao
+- validacao entre numero de vetores e metadados
+- validacao da compatibilidade do modelo de embeddings
+- fallback threshold para reduzir casos de zero resultados
+- configuracao RAG_DEBUG no .env
+- troca do default de embedding para um modelo multilingual
+
+Por que essas mudancas foram importantes:
+- Porque sistemas RAG podem falhar silenciosamente.
+- O indice pode existir e ainda assim recuperar mal.
+- Sem logs de score e sem manifesto do indice, o erro fica dificil de localizar.
+
+
+23. RESUMO DAS DECISOES DE ENGENHARIA
+
+Decisao: usar PDFs locais
+Motivo: base controlada e auditavel
+
+Decisao: extrair texto por pagina
+Motivo: rastreabilidade e citacao
+
+Decisao: usar texto simples como formato extraido
+Motivo: simplicidade e compatibilidade com embeddings
+
+Decisao: salvar JSON intermediario
+Motivo: inspecao e persistencia estruturada
+
+Decisao: usar chunking com overlap
+Motivo: preservar contexto
+
+Decisao: usar sentence-transformers
+Motivo: embeddings semanticos prontos e praticos
+
+Decisao: usar FAISS local
+Motivo: retrieval rapido e offline para busca vetorial
+
+Decisao: usar reranker simples
+Motivo: reduzir complexidade e melhorar ordenacao
+
+Decisao: usar prompt fechado
+Motivo: reduzir alucinacao
+
+Decisao: usar DeepSeek apenas como gerador
+Motivo: separar conhecimento recuperado da redacao final
+
+Decisao: usar Streamlit
+Motivo: interface rapida para demonstracao
+
+Decisao: usar BERTScore
+Motivo: obter metrica automatica de aderencia semantica
+
+
+24. LIMITACOES DO PROJETO
+
+- PDFs com texto ruim prejudicam a extracao.
+- PDFs escaneados podem exigir OCR, que ainda nao foi implementado.
+- O reranker atual e simples.
+- BERTScore nao substitui avaliacao humana.
+- O sistema ainda depende da qualidade dos PDFs e da qualidade do embedding.
+- Thresholds muito agressivos podem zerar a recuperacao.
+
+
+25. EVOLUCOES POSSIVEIS
+
+- OCR para PDFs escaneados
+- cross-encoder para reranking
+- traducao ou alinhamento cross-lingual mais robusto
+- cache incremental de embeddings
+- painel de analytics mais rico
+- testes automatizados mais amplos
+- avaliacao com conjunto de perguntas e gabaritos
+- suporte a outros armazenamentos vetoriais
+
+
+26. CONCLUSAO
+
+Este chatbot foi desenvolvido como um sistema RAG local, modular e explicavel.
+Cada biblioteca e cada etapa foram escolhidas para equilibrar:
+
+- simplicidade de implementacao
+- clareza arquitetural
+- capacidade de auditoria
+- qualidade de recuperacao
+- possibilidade de evolucao futura
+
+O projeto nao e apenas um "chat com API". Ele combina processamento documental,
+limpeza de texto, engenharia de chunks, embeddings, indexacao vetorial,
+recuperacao semantica, reranking, prompt engineering, geracao condicionada,
+avaliacao e persistencia de logs.
+
+Em outras palavras, o projeto foi construido como um pipeline completo de
+chatbot academico com base documental local.
